@@ -1,6 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware import FBIFeedbackLoopMiddleware
 
 from app.config import settings
 from app.routers import users, auth, patients
@@ -27,6 +28,7 @@ app.add_middleware(
 app.include_router(users.router)
 app.include_router(auth.router)
 app.include_router(patients.router)
+app.add_middleware(FBIFeedbackLoopMiddleware)
 
 @app.get("/health", tags=["System Diagnostics"])
 async def health_check():
