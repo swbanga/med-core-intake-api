@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import users
+from app.routers import users, auth
 
 # Initialize the API Vault
 app = FastAPI(
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # Mount the routing matrix
 app.include_router(users.router)
+app.include_router(auth.router)
 
 @app.get("/health", tags=["System Diagnostics"])
 async def health_check():
