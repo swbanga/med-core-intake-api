@@ -3,7 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security.oauth2 import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_limiter.depends import RateLimiter
+import jwt
+from datetime import datetime, timezone
 
+from app.cache import redis_client
+from app.config import settings
+from app.oauth2 import oauth2_scheme
 from app.database import get_db_session
 from app import crud, utils, oauth2
 
@@ -46,3 +51,28 @@ async def login(
     )
     
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(token: str = Depends(oauth2_scheme)):
+    """
+    The Kill-Switch. Adds the token's JTI to the Redis blacklist.
+    """
+    try:
+        # Decode without verifying expiration (we just need the JTI and EXP)
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        
+        # Calculate remaining life of the token
+        now = datetime.now(timezone.utc).timestamp()
+        ttl = int(exp - now) # type: ignore
+        
+        if ttl > 0:
+            # Slam it into the Redis Blacklist with an automatic self-destruct timer
+            await redis_client.set(f"blacklist:{jti}", "true", ex=ttl)
+            
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=400, detail="Invalid token.")
+
+    return {"message": "Successfully logged out. Token mathematically neutralized."}

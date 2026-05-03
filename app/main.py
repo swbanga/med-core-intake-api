@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.middleware import FBIFeedbackLoopMiddleware
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
-from fastapi_limiter import FastAPILimiter # type: ignore
+from fastapi_limiter import FastAPILimiter
+from app.cache import redis_client
 
 from app.config import settings
 from app.routers import users, auth, patients
@@ -16,13 +17,12 @@ async def lifespan(app: FastAPI):
     Establishes the Redis connection pool for the rate limiter.
     """
     # 1. Boot connection to the medcore_cache container
-    redis_connection = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-    await FastAPILimiter.init(redis_connection)
+    await FastAPILimiter.init(redis_client)
     
     yield # API runs while this is yielded
     
     # 2. Teardown protocol
-    await redis_connection.close()
+    await redis_client.close()
 
 # Initialize the API Vault
 app = FastAPI(

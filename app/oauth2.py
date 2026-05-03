@@ -1,9 +1,11 @@
+import uuid
 import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cache import redis_client
 from app.config import settings
 from app.database import get_db_session
 from app import crud, schemas
@@ -14,17 +16,16 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    
+    # INJECT UNIQUE TOKEN ID (JTI)
+    to_encode.update({"exp": expire, "jti": str(uuid.uuid4())}) 
+    
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme), 
     session: AsyncSession = Depends(get_db_session)
 ):
-    """
-    The Interrogator. Extracts the token, verifies the cryptographic signature,
-    ensures it is not expired, and fetches the user from the database.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -32,26 +33,26 @@ async def get_current_user(
     )
     
     try:
-        # 1. Decode the JWT payload
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id: str = payload.get("sub") # type: ignore
-        if user_id is None:
+        jti: str = payload.get("jti") # type: ignore # EXTRACT THE JTI
+        
+        if user_id is None or jti is None:
             raise credentials_exception
+            
+        # THE KILL-SWITCH CHECK: Interrogate Redis
+        is_blacklisted = await redis_client.get(f"blacklist:{jti}")
+        if is_blacklisted:
+            raise HTTPException(status_code=401, detail="Token has been revoked.")
+            
     except jwt.ExpiredSignatureError:
-        # Intercept expired tokens cleanly
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+        raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.PyJWTError:
-        # Catch all other cryptographic failures (tampering, bad signature)
         raise credentials_exception
 
-    # 2. Verify the identity vector still exists in the database
-    user = await crud.get_user_by_id(session, user_id=user_id) # WE NEED TO ADD THIS TO CRUD
-    if user is None:
+    user = await crud.get_user_by_id(session, user_id=user_id)
+    if user is None or not user.is_active:
         raise credentials_exception
-        
-    # 3. Check the kill-switch
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user account")
         
     return user
 
