@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 import uuid
 
-from app.models import User, Role
-from app.schemas import UserCreate, RoleCreate
+from app.models import User, Role, PatientProfile
+from app.schemas import UserCreate, RoleCreate, PatientProfileCreate
 from app.utils import hash_password
 
 # ==========================================
@@ -62,3 +62,39 @@ async def get_user_by_id(session: AsyncSession, user_id: str) -> User | None:
     stmt = select(User).where(User.id == uuid.UUID(user_id))
     result = await session.execute(stmt)
     return result.scalars().first()
+
+# ==========================================
+# PATIENT PROFILE (PHI) DATA ACCESS
+# ==========================================
+async def create_patient_profile(session: AsyncSession, profile: PatientProfileCreate, user_id: str) -> PatientProfile:
+    """Injects PHI into the vault. Anchors to the JWT user_id."""
+    db_profile = PatientProfile(
+        **profile.model_dump(), 
+        user_id=uuid.UUID(user_id) # Hard-anchored here. Client cannot spoof this.
+    )
+    session.add(db_profile)
+    await session.commit()
+    await session.refresh(db_profile)
+    return db_profile
+
+async def get_patient_profile_by_user(session: AsyncSession, user_id: str) -> PatientProfile | None:
+    """Fetches a profile exclusively by the authenticated user's ID."""
+    stmt = select(PatientProfile).where(PatientProfile.user_id == uuid.UUID(user_id))
+    result = await session.execute(stmt)
+    return result.scalars().first()
+
+async def get_all_patient_profiles(
+    session: AsyncSession, 
+    limit: int = 100, 
+    offset: int = 0
+) -> list[PatientProfile]:
+    """
+    Fetches a paginated list of PHI. 
+    Never executed without strict Medical/Admin clearance.
+    """
+    # Math: Limit bounds the size, Offset skips previous pages
+    stmt = select(PatientProfile).limit(limit).offset(offset)
+    result = await session.execute(stmt)
+    
+    # .all() is safe here because the .limit() constrained the SQL engine
+    return list(result.scalars().all())
