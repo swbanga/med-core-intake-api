@@ -61,3 +61,10 @@ class PatientProfileRead(PatientProfileBase):
     user_id: uuid.UUID
     
     model_config = ConfigDict(from_attributes=True)
+
+class PatientProfileUpdate(BaseModel):
+    """Allows partial updates to the medical record."""
+    first_name: str | None = Field(default=None, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    date_of_birth: date | None = None
+    medical_history: str | None = None

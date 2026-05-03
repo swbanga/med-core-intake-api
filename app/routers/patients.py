@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db_session
-from app.schemas import PatientProfileCreate, PatientProfileRead, UserRead
+from app.schemas import PatientProfileCreate, PatientProfileRead, UserRead, PatientProfileUpdate
 from app.oauth2 import get_current_user, RoleChecker
 from app import crud
 
@@ -70,3 +70,26 @@ async def get_all_profiles(
     Fetches a paginated list of all patient medical profiles.
     """
     return await crud.get_all_patient_profiles(session, limit=limit, offset=offset)
+
+
+@router.put(
+    "/{profile_id}", 
+    response_model=PatientProfileRead,
+    dependencies=[Depends(require_medical_clearance)] # ONLY DOCTORS/ADMINS
+)
+async def modify_patient_profile(
+    profile_id: str,
+    update_data: PatientProfileUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: UserRead = Depends(get_current_user)
+):
+    """
+    MEDICAL CLEARANCE REQUIRED.
+    Modifies a patient profile and strictly logs the previous state to the audit ledger.
+    """
+    return await crud.update_patient_profile(
+        session=session, 
+        profile_id=profile_id, 
+        update_data=update_data, 
+        actor_id=str(current_user.id) # Capture exactly who is making the change
+    )

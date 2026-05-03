@@ -2,7 +2,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 import uuid
+from fastapi import HTTPException
 
+from app.models import PatientProfileHistory
+from app.schemas import PatientProfileUpdate
 from app.models import User, Role, PatientProfile
 from app.schemas import UserCreate, RoleCreate, PatientProfileCreate
 from app.utils import hash_password
@@ -98,3 +101,42 @@ async def get_all_patient_profiles(
     
     # .all() is safe here because the .limit() constrained the SQL engine
     return list(result.scalars().all())
+
+
+async def update_patient_profile(
+    session: AsyncSession, 
+    profile_id: str, 
+    update_data: PatientProfileUpdate, 
+    actor_id: str
+) -> PatientProfile:
+    """Updates a profile and enforces the immutable audit trail."""
+    
+    # 1. Fetch the current state
+    stmt = select(PatientProfile).where(PatientProfile.id == uuid.UUID(profile_id))
+    result = await session.execute(stmt)
+    db_profile = result.scalars().first()
+    
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+
+    # 2. Forge the Historical Snapshot
+    history_record = PatientProfileHistory(
+        profile_id=db_profile.id,
+        changed_by_user_id=uuid.UUID(actor_id),
+        old_first_name=db_profile.first_name,
+        old_last_name=db_profile.last_name,
+        old_date_of_birth=db_profile.date_of_birth,
+        old_medical_history=db_profile.medical_history
+    )
+    session.add(history_record)
+
+    # 3. Apply the Updates dynamically
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for key, value in update_dict.items():
+        setattr(db_profile, key, value)
+
+    # 4. Commit the Atomic Transaction (Both succeed or both fail)
+    await session.commit()
+    await session.refresh(db_profile)
+    
+    return db_profile

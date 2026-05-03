@@ -49,3 +49,26 @@ class PatientProfile(Base):
 
     # Relationship back-population
     user: Mapped["User"] = relationship(back_populates="patient_profile")
+
+class PatientProfileHistory(Base):
+    """The Immutable Ledger. Append-only. Never deleted. Never updated."""
+    __tablename__ = "patient_profiles_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # The record being modified
+    profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patient_profiles.id", ondelete="CASCADE"), nullable=False)
+    
+    # The entity (Doctor/Admin/Patient) making the change
+    changed_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    
+    # The historical snapshot (What it was BEFORE the change)
+    old_first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    old_date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) # type: ignore
+    
+    # Encrypted snapshot
+    old_medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
+
+    # The exact moment of modification
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
