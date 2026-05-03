@@ -1,4 +1,3 @@
-# app/routers/users.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -6,13 +5,21 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db_session
 from app.schemas import UserCreate, UserRead, RoleCreate, RoleRead
 from app import crud
+from app.oauth2 import RoleChecker 
 
-# The router instance. Tags group these endpoints in the Swagger UI.
 router = APIRouter(prefix="/v1/identity", tags=["Identity & Access Management"])
 
-@router.post("/roles", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
+# Instantiate the dependency: ONLY System_Admins can hit this endpoint
+require_admin = RoleChecker(["System_Admin"])
+
+@router.post(
+    "/roles", 
+    response_model=RoleRead, 
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)] # <-- THE LOCK
+)
 async def create_rbac_role(role: RoleCreate, session: AsyncSession = Depends(get_db_session)):
-    """Creates a new Role in the authorization matrix."""
+    """Creates a new Role. STRICTLY RESTRICTED TO SYSTEM_ADMIN."""
     existing_role = await crud.get_role_by_name(session, role.name)
     if existing_role:
         raise HTTPException(status_code=400, detail="Role identifier already exists.")

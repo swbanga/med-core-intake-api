@@ -56,3 +56,9 @@ async def create_user(session: AsyncSession, user: UserCreate) -> User:
     await session.refresh(db_user)
     
     return db_user
+
+async def get_user_by_id(session: AsyncSession, user_id: str) -> User | None:
+    """Fetches a user by UUID. Required for JWT token validation."""
+    stmt = select(User).where(User.id == uuid.UUID(user_id))
+    result = await session.execute(stmt)
+    return result.scalars().first()
