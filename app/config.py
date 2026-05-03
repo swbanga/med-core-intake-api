@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Cryptographic Key for PHI Application-Level Encryption
     ENCRYPTION_KEY: str
 
+    # Caching / Rate Limiting
+    REDIS_URL: str
+
     # Strictly enforce reading from .env
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     
