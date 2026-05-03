@@ -22,8 +22,12 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    # Cryptographic Key for PHI Application-Level Encryption
+    ENCRYPTION_KEY: str
+
     # Strictly enforce reading from .env
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    
 
 # Global singleton
 settings = Settings() # type: ignore

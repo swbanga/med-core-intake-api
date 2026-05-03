@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import ForeignKey, String, DateTime, text, Date, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from app.crypto import EncryptedString
 
 class Base(DeclarativeBase):
     pass
@@ -44,7 +45,7 @@ class PatientProfile(Base):
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) #type: ignore    
-    medical_history: Mapped[str] = mapped_column(Text, nullable=True)
+    medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
 
     # Relationship back-population
     user: Mapped["User"] = relationship(back_populates="patient_profile")
