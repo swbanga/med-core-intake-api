@@ -26,8 +26,14 @@ class UserBase(BaseModel):
     email: EmailStr = Field(..., description="Valid email identity vector")
     is_active: bool = True
 
+
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=12, description="Minimum 12 chars. NIST standard.")
+    password: str = Field(
+        ..., 
+        min_length=12, 
+        max_length=64, # <-- THE FIX: Bounces oversized passwords at the door
+        description="Min 12 chars. Max 64 chars due to bcrypt 72-byte block limit."
+    )
     role_id: uuid.UUID
 
 class UserRead(UserBase):
