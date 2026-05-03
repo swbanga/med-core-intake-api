@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
 # ==========================================
@@ -42,4 +42,22 @@ class UserRead(UserBase):
     role: RoleRead | None = None # Nested representation of the role
     
     # CRITICAL: hashed_password is strictly absent from this output model
+    model_config = ConfigDict(from_attributes=True)
+
+# ==========================================
+# PATIENT PROFILE SCHEMAS (DTOs)
+# ==========================================
+class PatientProfileBase(BaseModel):
+    first_name: str = Field(..., max_length=100)
+    last_name: str = Field(..., max_length=100)
+    date_of_birth: date = Field(..., description="ISO 8601 Format: YYYY-MM-DD")
+    medical_history: str | None = Field(default=None, description="Pre-existing conditions, allergies, etc.")
+
+class PatientProfileCreate(PatientProfileBase):
+    pass # Patients will submit this form after registering an account
+
+class PatientProfileRead(PatientProfileBase):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    
     model_config = ConfigDict(from_attributes=True)

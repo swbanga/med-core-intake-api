@@ -1,7 +1,7 @@
 # app/models.py
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import ForeignKey, String, DateTime, text
+from sqlalchemy import ForeignKey, String, DateTime, text, Date, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -28,3 +28,23 @@ class User(Base):
     
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
     role: Mapped["Role"] = relationship(back_populates="users", lazy="joined")
+    
+    patient_profile: Mapped["PatientProfile"] = relationship("PatientProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
+
+class PatientProfile(Base):
+    """The strict PHI (Protected Health Information) Vault"""
+    __tablename__ = "patient_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # The Anchor: Links directly to the authentication identity
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) #type: ignore    
+    medical_history: Mapped[str] = mapped_column(Text, nullable=True)
+
+    # Relationship back-population
+    user: Mapped["User"] = relationship(back_populates="patient_profile")
