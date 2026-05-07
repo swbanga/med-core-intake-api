@@ -35,4 +35,4 @@ async def register_user(user: UserCreate, session: AsyncSession = Depends(get_db
     except IntegrityError:
         # Intercepts database-level unique constraint violations (e.g., duplicate email)
         await session.rollback()
-        raise HTTPException(status_code=400, detail="Email already registered or Role ID invalid.")
+        raise HTTPException(status_code=409, detail="Identity already exists.")
