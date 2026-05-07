@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Core settings
-    PROJECT_NAME: str = "Med-Core Intake API"
+    PROJECT_NAME: str = "Med-Core Intake DevSecOps API"
     ENVIRONMENT: str = "local"
     
     # Database Credentials

@@ -1,5 +1,6 @@
 # app/main.py
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.middleware import FBIFeedbackLoopMiddleware
 from contextlib import asynccontextmanager
@@ -9,6 +10,19 @@ from app.cache import redis_client
 
 from app.config import settings
 from app.routers import users, auth, patients
+
+
+description = """
+### 🛡️ Enterprise Zero-Trust Healthcare API
+
+Welcome to the Med-Core Intake API Documentation.
+
+**Interactive API Testing:**
+To test these endpoints dynamically, please use our official public workspace:
+👉 **[Med-Core Postman Workspace](https://www.postman.com/your-public-link-here)**
+
+*Note: You must obtain an OAuth2 Bearer token via the `/login` endpoint to access secured routes.*
+"""
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,10 +41,10 @@ async def lifespan(app: FastAPI):
 # Initialize the API Vault
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Zero-Trust Healthcare Backend",
+    description=description,
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    docs_url="/swagger", # Moves Swagger out of the way
+    redoc_url="/redoc",
     lifespan=lifespan
 )
 
@@ -53,3 +67,7 @@ app.add_middleware(FBIFeedbackLoopMiddleware)
 async def health_check():
     """The FBI Feedback Loop: Basic heartbeat."""
     return {"status": "operational", "environment": settings.ENVIRONMENT}
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/redoc")
