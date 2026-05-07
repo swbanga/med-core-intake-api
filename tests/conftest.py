@@ -38,13 +38,14 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
+
 @pytest_asyncio.fixture(scope="function")
 async def async_client(db_session):
-    """
-    Injects a fresh Redis connection into the API for EVERY test.
-    The namespace is strictly protected.
-    """
     fresh_redis = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+    
+    # 1. THE AMNESIA PROTOCOL: Wipe the DDoS memory completely clean for this test.
+    # This prevents the 429 without destroying FastAPI's strict dependency types.
+    await fresh_redis.flushdb()
     
     # Patch the global application state in memory securely
     cache.redis_client = fresh_redis
@@ -52,7 +53,9 @@ async def async_client(db_session):
     auth_router.redis_client = fresh_redis
     main_module.redis_client = fresh_redis 
 
-    # 2. NEW OVERRIDE: Mathematically force the DDoS shield to arm itself
+    # (DELETE the always_allow and RateLimiter.__call__ hack entirely)
+
+    # 2. Boot the actual, unmodified Rate Limiter
     await FastAPILimiter.init(fresh_redis)
 
     transport = ASGITransport(app=app)
@@ -60,7 +63,7 @@ async def async_client(db_session):
         yield client
         
     # Clean up the socket
-    await fresh_redis.close()
+    await fresh_redis.aclose()
 
 @pytest_asyncio.fixture(scope="function")
 async def seeded_role(db_session):

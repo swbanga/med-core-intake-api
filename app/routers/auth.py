@@ -50,7 +50,7 @@ async def login(
         data={"sub": str(user.id), "role": user.role.name}
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer"} # nosec B105
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)

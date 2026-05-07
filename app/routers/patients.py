@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+import uuid
+from sqlalchemy import select
+from fastapi import status, HTTPException
+from app.models import PatientProfile, Role
 
 from app.database import get_db_session
 from app.schemas import PatientProfileCreate, PatientProfileRead, UserRead, PatientProfileUpdate
@@ -93,3 +97,45 @@ async def modify_patient_profile(
         update_data=update_data, 
         actor_id=str(current_user.id) # Capture exactly who is making the change
     )
+
+
+@router.get("/profile/{profile_id}")
+async def get_patient_profile(
+    profile_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: UserRead = Depends(get_current_user)
+):
+    # ... the rest of the ABAC logic remains exactly the same ...
+    """
+    THE IDOR DEFENSE MATRIX.
+    Fetches a specific profile but strictly validates data ownership and medical clearance.
+    """
+    # 1. Fetch the raw record from the PostgreSQL vault
+    stmt = select(PatientProfile).where(PatientProfile.id == uuid.UUID(profile_id))
+    result = await session.execute(stmt)
+    profile = result.scalars().first()
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+
+    # 2. Extract the Actor's Role Identity
+    role_stmt = select(Role).where(Role.id == current_user.role_id) # type: ignore
+    role_result = await session.execute(role_stmt)
+    actor_role = role_result.scalars().first()
+    
+    if not actor_role:
+        raise HTTPException(status_code=403, detail="Invalid role hierarchy.")
+
+    # 3. ABAC EVALUATION (Attribute-Based Access Control)
+    is_owner = str(profile.user_id) == str(current_user.id)
+    is_medical_staff = actor_role.name in ["Doctor", "Admin"]
+
+    # 4. THE KILL SWITCH
+    if not is_owner and not is_medical_staff:
+        # If you don't own it, and you aren't a doctor, the matrix violently rejects you.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Not enough permissions"
+        )
+
+    return profile

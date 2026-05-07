@@ -9,3 +9,11 @@ tests/
 .pytest_cache/
 __pycache__/
 pytest.ini
+# .dockerignore
+venv/
+.pytest_cache/
+__pycache__/
+.env
+.git/
+.github/
+tests/
