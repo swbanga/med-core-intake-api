@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Caching / Rate Limiting
     REDIS_URL: str
 
+    # The Sandbox
+    TEST_DATABASE_URL: str
+
     # Strictly enforce reading from .env
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     

@@ -4,10 +4,8 @@ from sqlalchemy.exc import IntegrityError
 import uuid
 from fastapi import HTTPException
 
-from app.models import PatientProfileHistory
-from app.schemas import PatientProfileUpdate
-from app.models import User, Role, PatientProfile
-from app.schemas import UserCreate, RoleCreate, PatientProfileCreate
+from app.models import PatientProfileHistory, User, Role, PatientProfile
+from app.schemas import PatientProfileUpdate, UserCreate, RoleCreate, PatientProfileCreate
 from app.utils import hash_password
 
 # ==========================================
