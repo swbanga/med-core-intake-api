@@ -116,6 +116,6 @@ jobs:
         
         az containerapp update \
           --name medcore-api \
-          --resource-group medcore-production-rg \
+          --resource-group medcore-prod-swiss-rg \
           --image $IMAGE_NAME \
           --set-env-vars DATABASE_URL="${{ secrets.DATABASE_URL }}" SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}" ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" REDIS_URL="${{ secrets.REDIS_URL }}"

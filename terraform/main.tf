@@ -6,7 +6,7 @@ provider "azurerm" {
 
 # 1. Connect to the perimeter already built
 data "azurerm_resource_group" "rg" {
-  name = "medcore-production-rg"
+  name = "medcore-prod-swiss-rg"
 }
 
 # 2. Forge the Analytics Workspace (Required by Azure for Container Logs)
