@@ -3,7 +3,6 @@ __pycache__/
 .env
 .git/
 .pytest_cache/
-alembic.ini
 # Quality Assurance / Testing Munitions
 tests/
 .pytest_cache/

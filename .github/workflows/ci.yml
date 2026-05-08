@@ -1,0 +1,119 @@
+# .github/workflows/ci.yml
+name: Med-Core DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ==========================================
+  # STAGE 1: THE PROVING GROUNDS
+  # ==========================================
+  security-and-testing:
+    runs-on: ubuntu-latest
+    
+    # Spin up ephemeral testing services in the GitHub Cloud
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: local_dev_password_change_me
+          POSTGRES_DB: medcore_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit pytest pytest-asyncio httpx
+
+    - name: Run Bandit SAST Scan
+      run: bandit -r app/
+
+    - name: Run Async Pytest Engine
+      env:
+        POSTGRES_USER: admin
+        POSTGRES_PASSWORD: local_dev_password_change_me
+        POSTGRES_DB: medcore_db
+        SECRET_KEY: super_secret_github_actions_key
+        ALGORITHM: HS256
+        ACCESS_TOKEN_EXPIRE_MINUTES: 30
+        ENCRYPTION_KEY: qQ1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8L9z0X=
+        REDIS_URL: redis://localhost:6379/0
+        TEST_DATABASE_URL: postgresql+asyncpg://admin:local_dev_password_change_me@localhost:5432/medcore_test_db
+      run: |
+        pytest -v
+
+  # ==========================================
+  # STAGE 2: THE ZERO-TRUST AZURE DEPLOYMENT
+  # ==========================================
+  deploy-to-azure:
+    needs: security-and-testing # Mathematically blocks deployment if tests fail
+    runs-on: ubuntu-latest
+    
+    # Required for OIDC and GHCR
+    permissions:
+      id-token: write 
+      contents: read
+      packages: write 
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Log in to GitHub Container Registry (GHCR)
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and Push Immutable Image
+      run: |
+        # Convert repo name to lowercase to satisfy Docker naming constraints
+        REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_NAME=ghcr.io/$REPO_LOWER/medcore-api:latest
+        
+        docker build -t $IMAGE_NAME .
+        docker push $IMAGE_NAME
+
+    - name: Azure OIDC Federation Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy Container to Azure Environment
+      run: |
+        REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_NAME=ghcr.io/$REPO_LOWER/medcore-api:latest
+        
+        az containerapp update \
+          --name medcore-api \
+          --resource-group medcore-production-rg \
+          --image $IMAGE_NAME \
+          --set-env-vars DATABASE_URL="${{ secrets.DATABASE_URL }}" SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}" ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" REDIS_URL="${{ secrets.REDIS_URL }}"
