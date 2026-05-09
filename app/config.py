@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Test
     TEST_DATABASE_URL: str
 
+    # Frontend / API base URL (used for invitation links)
+    APP_BASE_URL: str = "http://localhost:8000"   # default, should be overridden in production
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()  # type: ignore

@@ -49,15 +49,21 @@ async def create_user(session: AsyncSession, user: UserCreate) -> User:
     return db_user
 
 async def create_invited_user(session: AsyncSession, invite: UserInvite) -> tuple[str, str]:
-    """Creates an inactive user with no password. Returns (activation_jti, email)."""
+    # Resolve role name to ID
+    stmt = select(Role).where(Role.name == invite.role_name)
+    result = await session.execute(stmt)
+    role = result.scalars().first()
+    if not role:
+        raise HTTPException(status_code=404, detail=f"Role '{invite.role_name}' not found.")
     db_user = User(
         email=invite.email,
-        role_id=invite.role_id,
+        role_id=role.id,
         is_active=False,
         is_password_set=False,
     )
     session.add(db_user)
-    await session.flush()  # get user.id
+    await session.commit()
+    await session.refresh(db_user)
 
     # Generate activation token JTI with short expiry (24h)
     jti = str(uuid.uuid4())

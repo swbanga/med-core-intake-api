@@ -8,6 +8,7 @@ from app.database import get_db_session
 from app.schemas import UserCreate, UserRead, RoleCreate, RoleRead, UserInvite
 from app import crud
 from app.oauth2 import RoleChecker
+from app.config import settings
 
 router = APIRouter(prefix="/v1/identity", tags=["Identity & Access Management"])
 
@@ -34,21 +35,23 @@ async def create_rbac_role(role: RoleCreate, session: AsyncSession = Depends(get
 )
 async def invite_user(
     invite: UserInvite,
-    session: AsyncSession = Depends(get_db_session)
+    session: AsyncSession = Depends(get_db_session),
 ):
-    """
-    Admin creates an inactive user without a password.
-    Returns an activation token (to be emailed to the user).
-    """
     try:
         activation_jti, user_email = await crud.create_invited_user(session, invite)
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail="Email already registered.")
-    # In a real system you would email the link. Here we return it directly.
-    activation_url = f"/v1/identity/activate?token={activation_jti}&email={user_email}"
-    return {"message": "User invited. Please use the activation link to set your password.",
-            "activation_url": activation_url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Build the full activation link using APP_BASE_URL
+    activation_url = f"{settings.APP_BASE_URL}/v1/identity/activate?token={activation_jti}"
+
+    return {
+        "message": "User invited. Share this link securely.",
+        "activation_url": activation_url,
+    }
 
 
 @router.post(
@@ -68,17 +71,17 @@ async def activate_account(
     return {"message": "Account activated successfully."}
 
 
-@router.post(
-    "/users",
-    response_model=UserRead,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
-)
-async def register_user(user: UserCreate, session: AsyncSession = Depends(get_db_session)):
-    # Legacy self‑registration (still allows direct password)
-    try:
-        new_user = await crud.create_user(session, user)
-        return new_user
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail="Identity already exists.")
+# @router.post(
+#     "/users",
+#     response_model=UserRead,
+#     status_code=status.HTTP_201_CREATED,
+#     dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+# )
+# async def register_user(user: UserCreate, session: AsyncSession = Depends(get_db_session)):
+#     # Legacy self‑registration (still allows direct password)
+#     try:
+#         new_user = await crud.create_user(session, user)
+#         return new_user
+#     except IntegrityError:
+#         await session.rollback()
+#         raise HTTPException(status_code=409, detail="Identity already exists.")

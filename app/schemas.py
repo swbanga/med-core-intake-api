@@ -38,7 +38,7 @@ class UserCreate(UserBase):
 
 class UserInvite(BaseModel):
     email: EmailStr
-    role_id: uuid.UUID
+    role_name: str = Field(..., max_length=50)
 
 class UserRead(UserBase):
     id: uuid.UUID
