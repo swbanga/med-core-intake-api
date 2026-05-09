@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.middleware import FBIFeedbackLoopMiddleware
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
@@ -83,7 +84,7 @@ async def health_check():
 
     # Redis check
     try:
-        if await redis_client.ping():
+        if await redis_client.ping(): # type: ignore
             health["redis"] = "healthy"
     except (redis_exc.ConnectionError, redis_exc.TimeoutError):
         health["status"] = "degraded"

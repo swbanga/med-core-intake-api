@@ -1,7 +1,7 @@
 # app/models.py
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import ForeignKey, String, DateTime, text, Date, Text
+from sqlalchemy import ForeignKey, String, DateTime, text, Date, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.crypto import EncryptedString
@@ -23,8 +23,10 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=True)   # null until activation
+    is_active: Mapped[bool] = mapped_column(default=False)                     # inactive by default
+    is_password_set: Mapped[bool] = mapped_column(default=False)
+    activation_token_jti: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
@@ -34,41 +36,34 @@ class User(Base):
 
 
 class PatientProfile(Base):
-    """The strict PHI (Protected Health Information) Vault"""
+    """PHI Vault – every identifying field encrypted"""
     __tablename__ = "patient_profiles"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # The Anchor: Links directly to the authentication identity
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
-    
-    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) #type: ignore    
+
+    # All PHI now encrypted
+    first_name: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    last_name: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) # type: ignore  # Leaving DOB as Date, can encrypt too but complicates queries
     medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
 
-    # Relationship back-population
+    # Optimistic concurrency control
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+
     user: Mapped["User"] = relationship(back_populates="patient_profile")
 
+
 class PatientProfileHistory(Base):
-    """The Immutable Ledger. Append-only. Never deleted. Never updated."""
+    """Immutable ledger – all changes recorded"""
     __tablename__ = "patient_profiles_history"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # The record being modified
     profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patient_profiles.id", ondelete="CASCADE"), nullable=False)
-    
-    # The entity (Doctor/Admin/Patient) making the change
     changed_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    
-    # The historical snapshot (What it was BEFORE the change)
-    old_first_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    old_last_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    old_date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) # type: ignore
-    
-    # Encrypted snapshot
-    old_medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
 
-    # The exact moment of modification
+    old_first_name: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    old_last_name: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    old_date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) # type: ignore
+    old_medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

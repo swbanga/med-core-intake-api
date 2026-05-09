@@ -59,7 +59,7 @@ class PatientProfileCreate(PatientProfileBase):
 class PatientProfileRead(PatientProfileBase):
     id: uuid.UUID
     user_id: uuid.UUID
-    
+    version: int   # for concurrency tracking
     model_config = ConfigDict(from_attributes=True)
 
 class PatientProfileUpdate(BaseModel):
