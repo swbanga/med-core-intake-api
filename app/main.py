@@ -19,9 +19,15 @@ Welcome to the Med-Core Intake API Documentation.
 
 **Interactive API Testing:**
 To test these endpoints dynamically, please use our official public workspace:
-👉 **[Med-Core Postman Workspace](https://www.postman.com/your-public-link-here)**
+👉 **[Med-Core Postman Workspace](https://www.postman.com/superwbanga-7863188/workspace/med-core-devsecops-matrix)**
 
-*Note: You must obtain an OAuth2 Bearer token via the `/login` endpoint to access secured routes.*
+**Recruiter & Portfolio Access:**
+To evaluate the DevSecOps architecture, authenticate via the `/login` endpoint using these read-only demo credentials:
+* **Email:** `demo@medcore.com`
+* **Password:** `medcore-demo-2026`
+
+---
+*Engineered by **Super Washington Banga*** | *Cloud Architect & DevSecOps Engineer*
 """
 
 @asynccontextmanager

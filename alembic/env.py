@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # 2. IMPORT THE VAULT: Pull in your Pydantic settings and SQLAlchemy Base
 from app.config import settings
-from app.models import Base
+from app.models import Base, User, Role, PatientProfile, PatientProfileHistory
 
 config = context.config
 
