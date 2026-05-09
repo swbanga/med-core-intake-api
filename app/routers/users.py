@@ -58,7 +58,7 @@ async def invite_user(
 )
 async def activate_account(
     token: str,
-    password: str = Depends(UserCreate.password),  # reuse password validation
+    password: str = Depends(UserCreate.password), # type: ignore # reuse password validation
     session: AsyncSession = Depends(get_db_session)
 ):
     """New user sets their password and activates the account."""

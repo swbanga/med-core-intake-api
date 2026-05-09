@@ -11,9 +11,9 @@ logger = logging.getLogger("med_core_db")
 engine = create_async_engine(
     settings.ASYNC_DATABASE_URL,
     echo=False,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_timeout=settings.DB_POOL_TIMEOUT,
 )
 
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

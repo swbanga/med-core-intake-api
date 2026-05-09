@@ -36,6 +36,10 @@ class UserCreate(UserBase):
     )
     role_id: uuid.UUID
 
+class UserInvite(BaseModel):
+    email: EmailStr
+    role_id: uuid.UUID
+
 class UserRead(UserBase):
     id: uuid.UUID
     created_at: datetime
