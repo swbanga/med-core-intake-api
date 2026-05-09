@@ -1,4 +1,3 @@
-# app/main.py
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +9,6 @@ from app.cache import redis_client
 
 from app.config import settings
 from app.routers import users, auth, patients
-
 
 description = """
 ### 🛡️ Enterprise Zero-Trust Healthcare API
@@ -32,47 +30,66 @@ To evaluate the DevSecOps architecture, authenticate via the `/login` endpoint u
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Server Startup and Shutdown protocol.
-    Establishes the Redis connection pool for the rate limiter.
-    """
-    # 1. Boot connection to the medcore_cache container
     await FastAPILimiter.init(redis_client)
-    
-    yield # API runs while this is yielded
-    
-    # 2. Teardown protocol
+    yield
     await redis_client.close()
 
-# Initialize the API Vault
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description=description,
     version="1.0.0",
-    docs_url="/swagger", # Moves Swagger out of the way
+    docs_url="/swagger",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# CORS Policy: Currently open for dev, will be brutally restricted in production
+# CORS – strictly from allowed origins only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS_LIST,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount the routing matrix
+# Feedback loop middleware (must come before routers for clarity)
+app.add_middleware(FBIFeedbackLoopMiddleware)
+
 app.include_router(users.router)
 app.include_router(auth.router)
 app.include_router(patients.router)
-app.add_middleware(FBIFeedbackLoopMiddleware)
+
 
 @app.get("/health", tags=["System Diagnostics"])
 async def health_check():
-    """The FBI Feedback Loop: Basic heartbeat."""
-    return {"status": "operational", "environment": settings.ENVIRONMENT}
+    """Deep health check: pings DB and Redis."""
+    from app.database import async_session_maker
+    import redis.exceptions as redis_exc
+
+    health = {
+        "status": "operational",
+        "environment": settings.ENVIRONMENT,
+        "database": "unreachable",
+        "redis": "unreachable",
+    }
+
+    # Database check
+    try:
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+        health["database"] = "healthy"
+    except Exception:
+        health["status"] = "degraded"
+
+    # Redis check
+    try:
+        if await redis_client.ping():
+            health["redis"] = "healthy"
+    except (redis_exc.ConnectionError, redis_exc.TimeoutError):
+        health["status"] = "degraded"
+
+    return health
+
 
 @app.get("/", include_in_schema=False)
 async def root_redirect():

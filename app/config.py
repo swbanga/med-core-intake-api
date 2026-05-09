@@ -1,39 +1,47 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List
 
 class Settings(BaseSettings):
-    # Core settings
     PROJECT_NAME: str = "Med-Core Intake DevSecOps API"
     ENVIRONMENT: str = "local"
-    
-    # Database Credentials
+
+    # Database
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
-    POSTGRES_HOST: str 
-    POSTGRES_PORT: int 
-    
-    # Computed async DB URL
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+
+    # Connection pool (overridable via env)
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+
     @property
     def ASYNC_DATABASE_URL(self) -> str:
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
-    # Security Stubs
+    # Security
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
-    # Cryptographic Key for PHI Application-Level Encryption
+    # Encryption (single key, version 1)
     ENCRYPTION_KEY: str
 
-    # Caching / Rate Limiting
+    # CORS – comma‑separated origins
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+
+    @property
+    def ALLOWED_ORIGINS_LIST(self) -> List[str]:
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    # Redis
     REDIS_URL: str
 
-    # The Sandbox
+    # Test
     TEST_DATABASE_URL: str
 
-    # Strictly enforce reading from .env
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-    
 
-# Global singleton
-settings = Settings() # type: ignore
+settings = Settings()  # type: ignore
