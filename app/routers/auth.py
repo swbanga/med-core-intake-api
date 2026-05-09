@@ -1,4 +1,3 @@
-# app/routers/auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security.oauth2 import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,63 +15,41 @@ router = APIRouter(tags=["Authentication Matrix"])
 
 @router.post(
     "/login",
-    # THE SHIELD: Max 5 requests per 60 seconds per IP
-    dependencies=[Depends(RateLimiter(times=5, seconds=60))] # type: ignore
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
 )
 async def login(
-    user_credentials: OAuth2PasswordRequestForm = Depends(), 
+    user_credentials: OAuth2PasswordRequestForm = Depends(),
     session: AsyncSession = Depends(get_db_session)
 ):
-    """
-    OAuth2 strictly mandates form-data (username/password), not JSON.
-    We map OAuth2's 'username' field to our 'email' column.
-    """
-    # 1. Fetch the identity vector
     user = await crud.get_user_by_email(session, email=user_credentials.username)
-    
-    # 2. Brutal, ambiguous rejection to prevent enumeration
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Invalid Credentials"
-        )
-        
-    # 3. Cryptographic verification
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Credentials")
     if not utils.verify_password(user_credentials.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Invalid Credentials"
-        )
-        
-    # 4. Forge the Zero-Trust Payload
-    # We embed the user's UUID and strict Role Name into the token.
-    access_token = oauth2.create_access_token(
-        data={"sub": str(user.id), "role": user.role.name}
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"} # nosec B105
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Credentials")
+
+    # JWT contains only 'sub' – no role embedding
+    access_token = oauth2.create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/logout", status_code=status.HTTP_200_OK)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 async def logout(token: str = Depends(oauth2_scheme)):
-    """
-    The Kill-Switch. Adds the token's JTI to the Redis blacklist.
-    """
     try:
-        # Decode without verifying expiration (we just need the JTI and EXP)
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         jti = payload.get("jti")
         exp = payload.get("exp")
-        
-        # Calculate remaining life of the token
         now = datetime.now(timezone.utc).timestamp()
-        ttl = int(exp - now) # type: ignore
-        
+        ttl = int(exp - now)  # type: ignore
+
         if ttl > 0:
-            # Slam it into the Redis Blacklist with an automatic self-destruct timer
             await redis_client.set(f"blacklist:{jti}", "true", ex=ttl)
-            
     except jwt.PyJWTError:
         raise HTTPException(status_code=400, detail="Invalid token.")
+    except Exception:
+        raise HTTPException(status_code=503, detail="Token revocation service unavailable.")
 
     return {"message": "Successfully logged out. Token mathematically neutralized."}

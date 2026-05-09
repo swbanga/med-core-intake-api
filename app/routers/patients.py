@@ -1,141 +1,106 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from fastapi_limiter.depends import RateLimiter
 import uuid
-from sqlalchemy import select
-from fastapi import status, HTTPException
-from app.models import PatientProfile, Role
 
 from app.database import get_db_session
-from app.schemas import PatientProfileCreate, PatientProfileRead, UserRead, PatientProfileUpdate
+from app.schemas import PatientProfileCreate, PatientProfileRead, PatientProfileUpdate
 from app.oauth2 import get_current_user, RoleChecker
 from app import crud
+from app.models import User  # for proper typing
 
 router = APIRouter(prefix="/v1/patients", tags=["Patient PHI Vault"])
 
-# Only roles explicitly defined here can access these routes
 require_patient_clearance = RoleChecker(["Patient"])
+require_read_all_phi = RoleChecker(["Doctor", "System_Admin", "Auditor"])
+require_modify_phi = RoleChecker(["Doctor", "System_Admin"])  # Auditor cannot modify
 
 @router.post(
-    "/profile", 
-    response_model=PatientProfileRead, 
+    "/profile",
+    response_model=PatientProfileRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_patient_clearance)]
+    dependencies=[Depends(require_patient_clearance), Depends(RateLimiter(times=5, seconds=60))],
 )
 async def create_profile(
-    profile: PatientProfileCreate, 
+    profile: PatientProfileCreate,
     session: AsyncSession = Depends(get_db_session),
-    current_user: UserRead = Depends(get_current_user) # <-- JWT INTERROGATION
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Creates a medical profile. 
-    The user_id is cryptographically extracted from the JWT, neutralizing IDOR attacks.
-    """
     try:
-        # Pass the extracted JWT ID directly to the CRUD layer
         return await crud.create_patient_profile(session, profile, str(current_user.id))
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, 
-            detail="A medical profile already exists for this identity."
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A medical profile already exists for this identity.")
+
 
 @router.get(
-    "/profile/me", 
+    "/profile/me",
     response_model=PatientProfileRead,
-    dependencies=[Depends(require_patient_clearance)]
+    dependencies=[Depends(require_patient_clearance), Depends(RateLimiter(times=10, seconds=60))],
 )
 async def get_my_profile(
     session: AsyncSession = Depends(get_db_session),
-    current_user: UserRead = Depends(get_current_user) # <-- JWT INTERROGATION
+    current_user: User = Depends(get_current_user),
 ):
-    """Fetches the authenticated user's own medical data."""
     profile = await crud.get_patient_profile_by_user(session, str(current_user.id))
     if not profile:
         raise HTTPException(status_code=404, detail="Medical profile not found. Please complete intake.")
     return profile
 
-# Create a new authorization matrix for medical staff
-require_medical_clearance = RoleChecker(["Doctor", "System_Admin"])
 
 @router.get(
-    "/", # Resolves to /v1/patients/
+    "/",
     response_model=list[PatientProfileRead],
-    dependencies=[Depends(require_medical_clearance)]
+    dependencies=[Depends(require_read_all_phi), Depends(RateLimiter(times=10, seconds=60))],
 )
 async def get_all_profiles(
     session: AsyncSession = Depends(get_db_session),
-    limit: int = Query(10, ge=1, le=100, description="Max records per page. Capped at 100."),
-    offset: int = Query(0, ge=0, description="Number of records to skip.")
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
-    """
-    MEDICAL CLEARANCE REQUIRED.
-    Fetches a paginated list of all patient medical profiles.
-    """
     return await crud.get_all_patient_profiles(session, limit=limit, offset=offset)
 
 
 @router.put(
-    "/{profile_id}", 
+    "/{profile_id}",
     response_model=PatientProfileRead,
-    dependencies=[Depends(require_medical_clearance)] # ONLY DOCTORS/ADMINS
+    dependencies=[Depends(require_modify_phi), Depends(RateLimiter(times=5, seconds=60))],
 )
 async def modify_patient_profile(
     profile_id: str,
     update_data: PatientProfileUpdate,
     session: AsyncSession = Depends(get_db_session),
-    current_user: UserRead = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    MEDICAL CLEARANCE REQUIRED.
-    Modifies a patient profile and strictly logs the previous state to the audit ledger.
-    """
     return await crud.update_patient_profile(
-        session=session, 
-        profile_id=profile_id, 
-        update_data=update_data, 
-        actor_id=str(current_user.id) # Capture exactly who is making the change
+        session=session,
+        profile_id=profile_id,
+        update_data=update_data,
+        actor_id=str(current_user.id),
     )
 
 
-@router.get("/profile/{profile_id}")
+@router.get(
+    "/profile/{profile_id}",
+    response_model=PatientProfileRead,
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 async def get_patient_profile(
     profile_id: str,
     session: AsyncSession = Depends(get_db_session),
-    current_user: UserRead = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    # ... the rest of the ABAC logic remains exactly the same ...
     """
-    THE IDOR DEFENSE MATRIX.
-    Fetches a specific profile but strictly validates data ownership and medical clearance.
+    ABAC: Owner, Doctor, System_Admin, or Auditor can view.
     """
-    # 1. Fetch the raw record from the PostgreSQL vault
-    stmt = select(PatientProfile).where(PatientProfile.id == uuid.UUID(profile_id))
-    result = await session.execute(stmt)
-    profile = result.scalars().first()
-
+    profile = await crud.get_patient_profile_by_id(session, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found.")
 
-    # 2. Extract the Actor's Role Identity
-    role_stmt = select(Role).where(Role.id == current_user.role_id) # type: ignore
-    role_result = await session.execute(role_stmt)
-    actor_role = role_result.scalars().first()
-    
-    if not actor_role:
-        raise HTTPException(status_code=403, detail="Invalid role hierarchy.")
-
-    # 3. ABAC EVALUATION (Attribute-Based Access Control)
+    # Authorization
     is_owner = str(profile.user_id) == str(current_user.id)
-    is_medical_staff = actor_role.name in ["Doctor", "Admin"]
-
-    # 4. THE KILL SWITCH
-    if not is_owner and not is_medical_staff:
-        # If you don't own it, and you aren't a doctor, the matrix violently rejects you.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Not enough permissions"
-        )
-
+    actor_role = current_user.role.name if current_user.role else ""
+    if not is_owner and actor_role not in ["Doctor", "System Admin", "Auditor"]:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     return profile
