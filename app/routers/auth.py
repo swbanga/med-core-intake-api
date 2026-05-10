@@ -29,7 +29,7 @@ async def login(
 
     # JWT contains only 'sub' – no role embedding
     access_token = oauth2.create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer"} # nosec B105
 
 
 @router.post(
