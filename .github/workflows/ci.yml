@@ -16,7 +16,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15-alpine
         env:
           POSTGRES_USER: admin
           POSTGRES_PASSWORD: local_dev_password_change_me
@@ -29,7 +29,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7
+        image: redis:7-alpine
         ports:
           - 6379:6379
 
