@@ -39,7 +39,7 @@ def upgrade() -> None:
                existing_type=sa.VARCHAR(length=100),
                type_=EncryptedString(),
                existing_nullable=False)
-    op.add_column('users', sa.Column('is_password_set', sa.Boolean(), nullable=False))
+    op.add_column('users', sa.Column('is_password_set', sa.Boolean(), nullable=False, server_default=sa.text('true')))
     op.add_column('users', sa.Column('activation_token_jti', sa.String(length=255), nullable=True))
     op.alter_column('users', 'hashed_password',
                existing_type=sa.VARCHAR(length=255),
