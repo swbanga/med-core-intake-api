@@ -48,6 +48,10 @@ class UserRead(UserBase):
     # CRITICAL: hashed_password is strictly absent from this output model
     model_config = ConfigDict(from_attributes=True)
 
+class ActivateUser(BaseModel):
+    token: str = Field(..., description="JWT activation token from invitation email/URL")
+    password: str = Field(..., min_length=12, max_length=64, description="New password – same rules as UserCreate")
+
 # ==========================================
 # PATIENT PROFILE SCHEMAS (DTOs)
 # ==========================================
@@ -67,8 +71,11 @@ class PatientProfileRead(PatientProfileBase):
     model_config = ConfigDict(from_attributes=True)
 
 class PatientProfileUpdate(BaseModel):
-    """Allows partial updates to the medical record."""
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     date_of_birth: date | None = None
     medical_history: str | None = None
+    version: int | None = Field(
+        default=None,
+        description="Current version as seen by the client. Required for updates to prevent lost updates."
+    )

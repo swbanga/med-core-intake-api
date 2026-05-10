@@ -54,7 +54,8 @@ async def create_invited_user(session: AsyncSession, invite: UserInvite) -> tupl
     result = await session.execute(stmt)
     role = result.scalars().first()
     if not role:
-        raise HTTPException(status_code=404, detail=f"Role '{invite.role_name}' not found.")
+        raise ValueError(f"Role '{invite.role_name}' not found.")    # <-- CHANGED
+
     db_user = User(
         email=invite.email,
         role_id=role.id,
@@ -132,17 +133,16 @@ async def update_patient_profile(
     session: AsyncSession,
     profile_id: str,
     update_data: PatientProfileUpdate,
-    actor_id: str
+    actor_id: str,
 ) -> PatientProfile:
-    # 1. Fetch current profile with version
+    # Fetch current profile (for audit and existence check)
     stmt = select(PatientProfile).where(PatientProfile.id == uuid.UUID(profile_id))
     result = await session.execute(stmt)
     db_profile = result.scalars().first()
-
     if not db_profile:
         raise HTTPException(status_code=404, detail="Profile not found.")
 
-    # 2. Save historical snapshot
+    # Audit trail snapshot
     history_record = PatientProfileHistory(
         profile_id=db_profile.id,
         changed_by_user_id=uuid.UUID(actor_id),
@@ -153,15 +153,22 @@ async def update_patient_profile(
     )
     session.add(history_record)
 
-    # 3. Optimistic lock: only update if version matches
     update_dict = update_data.model_dump(exclude_unset=True)
     if not update_dict:
-        return db_profile  # nothing to update
+        return db_profile
+
+    # Use client‑supplied version if given, otherwise fallback to current (backward compat)
+    expected_version = update_dict.pop("version", None)
+    if expected_version is None:
+        expected_version = db_profile.version
 
     new_version = db_profile.version + 1
     stmt_update = (
         update(PatientProfile)
-        .where(PatientProfile.id == uuid.UUID(profile_id), PatientProfile.version == db_profile.version)
+        .where(
+            PatientProfile.id == uuid.UUID(profile_id),
+            PatientProfile.version == expected_version,
+        )
         .values(**update_dict, version=new_version)
         .returning(PatientProfile)
     )
@@ -170,7 +177,10 @@ async def update_patient_profile(
 
     if not updated_profile:
         await session.rollback()
-        raise HTTPException(status_code=409, detail="Profile was modified by another user. Please reload and try again.")
+        raise HTTPException(
+            status_code=409,
+            detail="Profile was modified by another user. Please reload and try again."
+        )
 
     await session.commit()
     return updated_profile

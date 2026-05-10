@@ -5,7 +5,7 @@ from fastapi_limiter.depends import RateLimiter
 import jwt
 from datetime import datetime, timezone
 
-from app.cache import redis_client
+import app.cache
 from app.config import settings
 from app.oauth2 import oauth2_scheme
 from app.database import get_db_session
@@ -46,7 +46,7 @@ async def logout(token: str = Depends(oauth2_scheme)):
         ttl = int(exp - now)  # type: ignore
 
         if ttl > 0:
-            await redis_client.set(f"blacklist:{jti}", "true", ex=ttl)
+            await app.cache.redis_client.set(f"blacklist:{jti}", "true", ex=ttl)
     except jwt.PyJWTError:
         raise HTTPException(status_code=400, detail="Invalid token.")
     except Exception:

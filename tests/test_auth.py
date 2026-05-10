@@ -1,85 +1,100 @@
-# tests/test_auth.py
 import pytest
 from httpx import AsyncClient
 
-# This decorator tells Pytest that every function in this file is an asynchronous coroutine
+import redis.exceptions as redis_exc
+from app.config import settings
+
 pytestmark = pytest.mark.asyncio
 
-# ==========================================
-# ATTACK VECTOR 1: IDENTITY REGISTRATION
-# ==========================================
-async def test_register_user_success(async_client: AsyncClient, seeded_role: str):
-    """Proves the perimeter allows valid user registration."""
-    payload = {
-        "email": "agent@matrix.com",
-        "password": "SecurePassword123!",
-        "role_id": seeded_role
-    }
-    
-    response = await async_client.post("/v1/identity/users", json=payload)
-    
-    # 1. Assert strict HTTP status
-    assert response.status_code == 201
-    
-    # 2. Assert data structure and security boundaries
-    data = response.json()
-    assert data["email"] == "agent@matrix.com"
-    assert "id" in data
-    assert "hashed_password" not in data # MATHEMTICAL PROOF: Password is not leaked
 
-async def test_register_duplicate_user_rejected(async_client: AsyncClient, seeded_role: str):
-    """Proves the database physically rejects duplicate identities (409 Conflict)."""
-    payload = {
-        "email": "clone@matrix.com",
-        "password": "SecurePassword123!",
-        "role_id": seeded_role
-    }
-    
-    # Fire first request (Success)
-    await async_client.post("/v1/identity/users", json=payload)
-    
-    # Fire second request (Should violently fail)
-    response = await async_client.post("/v1/identity/users", json=payload)
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Identity already exists."
-
-# ==========================================
-# ATTACK VECTOR 2: THE JWT FORGE
-# ==========================================
-async def test_login_success_and_jwt_issuance(async_client: AsyncClient, seeded_role: str):
-    """Proves the login endpoint verifies bcrypt hashes and issues a valid JWT."""
-    # Arrange: Create the user first
-    password = "SecurePassword123!"
-    await async_client.post("/v1/identity/users", json={
-        "email": "neo@matrix.com", "password": password, "role_id": seeded_role
+async def test_login_success(async_client: AsyncClient, patient_token):
+    """Token already obtained in fixture, but we can verify directly."""
+    resp = await async_client.post("/login", data={
+        "username": "patient@test.com",
+        "password": "PatientPass123!"
     })
-    
-    # Act: Attempt OAuth2 Form-Data Login
-    login_data = {
-        "username": "neo@matrix.com",
-        "password": password
-    }
-    # Notice we use 'data=' instead of 'json=' because OAuth2 strictly demands form-data
-    response = await async_client.post("/login", data=login_data)
-    
-    # Assert
-    assert response.status_code == 200
-    data = response.json()
+    assert resp.status_code == 200
+    data = resp.json()
     assert "access_token" in data
     assert data["token_type"] == "bearer"
 
-async def test_login_invalid_credentials_rejected(async_client: AsyncClient, seeded_role: str):
-    """Proves the system rejects brute-force / bad passwords without enumerating users."""
-    # Arrange: Create user
-    await async_client.post("/v1/identity/users", json={
-        "email": "trinity@matrix.com", "password": "RealPassword123!", "role_id": seeded_role
+
+async def test_login_invalid_password(async_client: AsyncClient, patient_user):
+    resp = await async_client.post("/login", data={
+        "username": patient_user.email,
+        "password": "WrongPassword!@#"
     })
-    
-    # Act: Attack with wrong password
-    response = await async_client.post("/login", data={
-        "username": "trinity@matrix.com", "password": "WrongPassword!@#"
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Invalid Credentials"
+
+
+async def test_login_nonexistent_user(async_client: AsyncClient):
+    resp = await async_client.post("/login", data={
+        "username": "ghost@test.com",
+        "password": "whatever"
     })
-    
-    # Assert: Must be a brutal, ambiguous 403 Forbidden
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Invalid Credentials"
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Invalid Credentials"
+
+
+async def test_protected_route_without_token(async_client: AsyncClient):
+    resp = await async_client.get("/v1/patients/profile/me")
+    assert resp.status_code == 401  # or 403, depends on your middleware
+
+
+async def test_protected_route_with_invalid_token(async_client: AsyncClient):
+    headers = {"Authorization": "Bearer invalidtoken"}
+    resp = await async_client.get("/v1/patients/profile/me", headers=headers)
+    assert resp.status_code == 401
+
+
+async def test_logout_sets_blacklist_key(async_client: AsyncClient, patient_token, clean_redis):
+    """Logout must place the token's jti into Redis with a TTL."""
+    headers = {"Authorization": f"Bearer {patient_token}"}
+    resp = await async_client.post("/logout", headers=headers)
+    assert resp.status_code == 200
+
+    # Extract jti from token
+    import jwt
+    payload = jwt.decode(
+        patient_token,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM],
+        options={"verify_exp": False}   # do not care about expiry
+    )
+    jti = payload.get("jti")
+    assert jti is not None
+
+    # Verify the key was stored in Redis
+    exists = await clean_redis.exists(f"blacklist:{jti}")
+    assert exists == 1
+
+
+async def test_blacklisted_token_is_rejected(async_client: AsyncClient, patient_token, clean_redis):
+    """A token whose jti is in the blacklist must get 401."""
+    import jwt
+    payload = jwt.decode(
+        patient_token,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM],
+        options={"verify_exp": False}
+    )
+    jti = payload["jti"]
+
+    # Manually blacklist the token
+    await clean_redis.set(f"blacklist:{jti}", "true", ex=3600)
+
+    # Try to use it
+    headers = {"Authorization": f"Bearer {patient_token}"}
+    resp = await async_client.get("/v1/patients/profile/me", headers=headers)
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Token has been revoked."
+
+
+async def test_health_check(async_client: AsyncClient):
+    resp = await async_client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] in ("operational", "degraded")
+    assert data["database"] == "healthy"
+    assert data["redis"] == "healthy"

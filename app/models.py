@@ -27,7 +27,11 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=False)                     # inactive by default
     is_password_set: Mapped[bool] = mapped_column(default=False)
     activation_token_jti: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+    server_default=text("now()"),
+)
     
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
     role: Mapped["Role"] = relationship(back_populates="users", lazy="joined")
@@ -66,4 +70,8 @@ class PatientProfileHistory(Base):
     old_last_name: Mapped[str] = mapped_column(EncryptedString, nullable=False)
     old_date_of_birth: Mapped[datetime.date] = mapped_column(Date, nullable=False) # type: ignore
     old_medical_history: Mapped[str] = mapped_column(EncryptedString, nullable=True)
-    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    changed_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+    server_default=text("now()"),
+)

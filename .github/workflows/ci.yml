@@ -9,12 +9,11 @@ on:
 
 jobs:
   # ==========================================
-  # STAGE 1: THE PROVING GROUNDS
+  # STAGE 1: THE PROVING GROUNDS (CI)
   # ==========================================
   security-and-testing:
     runs-on: ubuntu-latest
     
-    # Spin up ephemeral testing services in the GitHub Cloud
     services:
       postgres:
         image: postgres:15
@@ -54,6 +53,8 @@ jobs:
       run: bandit -r app/
 
     - name: Run Async Pytest Engine
+      # DEVSECOPS PRINCIPLE: Strictly dummy values for isolated testing.
+      # Never expose ${{ secrets }} in the test runner.
       env:
         POSTGRES_USER: admin
         POSTGRES_PASSWORD: local_dev_password_change_me
@@ -64,19 +65,20 @@ jobs:
         ALGORITHM: HS256
         ACCESS_TOKEN_EXPIRE_MINUTES: 30
         ENCRYPTION_KEY: "cw_0x689RpI-jtRR7oE8h_eQsKImvJapLeSbXpwF4e4="
+        ENCRYPTION_KEYS: '{"1": "cw_0x689RpI-jtRR7oE8h_eQsKImvJapLeSbXpwF4e4="}'
+        ENCRYPTION_KEY_CURRENT_VERSION: 1
         REDIS_URL: redis://localhost:6379/0
         TEST_DATABASE_URL: postgresql+asyncpg://admin:local_dev_password_change_me@localhost:5432/medcore_test_db
       run: |
         pytest -v
 
   # ==========================================
-  # STAGE 2: THE ZERO-TRUST AZURE DEPLOYMENT
+  # STAGE 2: THE ZERO-TRUST AZURE DEPLOYMENT (CD)
   # ==========================================
   deploy-to-azure:
-    needs: security-and-testing # Mathematically blocks deployment if tests fail
+    needs: security-and-testing 
     runs-on: ubuntu-latest
     
-    # Required for OIDC and GHCR
     permissions:
       id-token: write 
       contents: read
@@ -85,6 +87,20 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+
+    - name: Set up Python for Database Migrations
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Execute Zero-Downtime Database Migration
+      env:
+        # Inject production DB secret so Alembic can align the schema before the code deploys
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        alembic upgrade head
 
     - name: Log in to GitHub Container Registry (GHCR)
       uses: docker/login-action@v3
@@ -95,7 +111,6 @@ jobs:
 
     - name: Build and Push Immutable Image
       run: |
-        # Convert repo name to lowercase to satisfy Docker naming constraints
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_NAME=ghcr.io/$REPO_LOWER/medcore-api:latest
         
@@ -114,8 +129,19 @@ jobs:
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_NAME=ghcr.io/$REPO_LOWER/medcore-api:latest
         
+        # Injecting 100% of state dynamically from GitHub Secrets
         az containerapp update \
           --name medcore-api \
           --resource-group medcore-prod-swiss-rg \
           --image $IMAGE_NAME \
-          --set-env-vars DATABASE_URL="${{ secrets.DATABASE_URL }}" SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}" ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" REDIS_URL="${{ secrets.REDIS_URL }}"
+          --set-env-vars DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                         SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}" \
+                         REDIS_URL="${{ secrets.REDIS_URL }}" \
+                         ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
+                         APP_BASE_URL="${{ secrets.APP_BASE_URL }}" \
+                         DB_MAX_OVERFLOW="${{ secrets.DB_MAX_OVERFLOW }}" \
+                         DB_POOL_SIZE="${{ secrets.DB_POOL_SIZE }}" \
+                         DB_POOL_TIMEOUT="${{ secrets.DB_POOL_TIMEOUT }}" \
+                         ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+                         ENCRYPTION_KEYS="${{ secrets.ENCRYPTION_KEYS }}" \
+                         ENCRYPTION_KEY_CURRENT_VERSION="${{ secrets.ENCRYPTION_KEY_CURRENT_VERSION }}"

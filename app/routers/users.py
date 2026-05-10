@@ -9,10 +9,12 @@ from app.schemas import UserCreate, UserRead, RoleCreate, RoleRead, UserInvite
 from app import crud
 from app.oauth2 import RoleChecker
 from app.config import settings
+from app import schemas
+
 
 router = APIRouter(prefix="/v1/identity", tags=["Identity & Access Management"])
 
-require_admin = RoleChecker(["System Admin"])
+require_admin = RoleChecker(["System Admin", "System_Admin"])
 
 @router.post(
     "/roles",
@@ -45,9 +47,7 @@ async def invite_user(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Build the full activation link using APP_BASE_URL
     activation_url = f"{settings.APP_BASE_URL}/v1/identity/activate?token={activation_jti}"
-
     return {
         "message": "User invited. Share this link securely.",
         "activation_url": activation_url,
@@ -60,12 +60,11 @@ async def invite_user(
     dependencies=[Depends(RateLimiter(times=3, seconds=60))],
 )
 async def activate_account(
-    token: str,
-    password: str = Depends(UserCreate.password), # type: ignore # reuse password validation
-    session: AsyncSession = Depends(get_db_session)
+    body: schemas.ActivateUser,
+    session: AsyncSession = Depends(get_db_session),
 ):
-    """New user sets their password and activates the account."""
-    success = await crud.activate_user(session, token, password)
+    """Activate a user account using the token and set a password."""
+    success = await crud.activate_user(session, body.token, body.password)
     if not success:
         raise HTTPException(status_code=400, detail="Invalid or expired activation token.")
     return {"message": "Account activated successfully."}

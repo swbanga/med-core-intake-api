@@ -1,37 +1,42 @@
-# tests/conftest.py
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 import redis.asyncio as redis
 import uuid
+import bcrypt
 from fastapi_limiter import FastAPILimiter
 
-# 1. TOP-LEVEL IMPORTS: Prevents Python Namespace Shadowing
 from app.main import app
-import app.main as main_module
-from app import cache, oauth2
-from app.routers import auth as auth_router
 from app.database import get_db_session
-from app.models import Base
+from app.models import Base, Role, User
 from app.config import settings
-from app.models import Role
 
-# 2. NULL POOL: Prevents SQLAlchemy from holding ghost connections
-engine = create_async_engine(settings.TEST_DATABASE_URL, poolclass=NullPool, echo=False)
-TestingSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ------------------------------------------------------------------
+# DATABASE ENGINE
+# ------------------------------------------------------------------
+engine = create_async_engine(
+    settings.TEST_DATABASE_URL,
+    poolclass=NullPool,
+    echo=False
+)
+
+TestingSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    expire_on_commit=False,
+    class_=AsyncSession
+)
+
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session():
-    """Wipes the database clean for every test."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     async with TestingSessionLocal() as session:
-        async def override_get_db():
-            yield session
-
-        app.dependency_overrides[get_db_session] = override_get_db
+        app.dependency_overrides[get_db_session] = lambda: session
         yield session
         app.dependency_overrides.clear()
 
@@ -40,36 +45,154 @@ async def db_session():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def async_client(db_session):
-    fresh_redis = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-    
-    # 1. THE AMNESIA PROTOCOL: Wipe the DDoS memory completely clean for this test.
-    # This prevents the 429 without destroying FastAPI's strict dependency types.
-    await fresh_redis.flushdb()
-    
-    # Patch the global application state in memory securely
-    cache.redis_client = fresh_redis
-    oauth2.redis_client = fresh_redis
-    auth_router.redis_client = fresh_redis
-    main_module.redis_client = fresh_redis 
+async def clean_redis():
+    """Replace all Redis references with a fresh test instance."""
+    test_redis = redis.from_url(
+        settings.REDIS_URL, encoding="utf-8", decode_responses=True
+    )
+    await test_redis.flushdb()
 
-    # (DELETE the always_allow and RateLimiter.__call__ hack entirely)
+    # Overwrite every module that holds a direct reference
+    import app.cache as cache_module
+    import app.oauth2 as oauth2_module
+    import app.routers.auth as auth_router
+    import app.main as main_module
 
-    # 2. Boot the actual, unmodified Rate Limiter
-    await FastAPILimiter.init(fresh_redis)
+    cache_module.redis_client = test_redis
+    oauth2_module.redis_client = test_redis # type: ignore
+    auth_router.redis_client = test_redis # type: ignore
+    main_module.redis_client = test_redis
 
+    # Initialise the rate limiter AFTER setting the new client
+    await FastAPILimiter.init(test_redis)
+
+    yield test_redis
+
+    # Tear down
+    await test_redis.aclose()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def async_client(db_session, clean_redis):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
-        
-    # Clean up the socket
-    await fresh_redis.aclose()
+
+
+# ------------------------------------------------------------------
+# SEEDED ROLES
+# ------------------------------------------------------------------
+@pytest_asyncio.fixture(scope="function")
+async def seeded_roles(db_session):
+    roles = {
+        "System_Admin": Role(id=uuid.uuid4(), name="System_Admin", description="Admin"),
+        "Doctor": Role(id=uuid.uuid4(), name="Doctor", description="MD"),
+        "Patient": Role(id=uuid.uuid4(), name="Patient", description="Patient"),
+        "Auditor": Role(id=uuid.uuid4(), name="Auditor", description="Auditor"),
+    }
+    for r in roles.values():
+        db_session.add(r)
+    await db_session.commit()
+    return {name: str(role.id) for name, role in roles.items()}
+
+
+# ------------------------------------------------------------------
+# USER FIXTURES
+# ------------------------------------------------------------------
+async def _create_user_in_db(session, email: str, password: str, role_id, is_active=True):
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode()
+    user = User(
+        email=email,
+        hashed_password=hashed,
+        role_id=role_id,
+        is_active=is_active,
+        is_password_set=True
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
 
 @pytest_asyncio.fixture(scope="function")
-async def seeded_role(db_session):
-    """Injects the foundational identity role."""
-    role_id = uuid.uuid4()
-    role = Role(id=role_id, name="Patient", description="Test Role")
-    db_session.add(role)
-    await db_session.commit()
-    return str(role_id)
+async def admin_user(db_session, seeded_roles):
+    return await _create_user_in_db(
+        db_session, "admin@test.com", "AdminPass123!", seeded_roles["System_Admin"]
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def admin_token(async_client, admin_user):
+    resp = await async_client.post("/login", data={
+        "username": admin_user.email,
+        "password": "AdminPass123!"
+    })
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def doctor_user(db_session, seeded_roles):
+    return await _create_user_in_db(
+        db_session, "doctor@test.com", "DoctorPass123!", seeded_roles["Doctor"]
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def doctor_token(async_client, doctor_user):
+    resp = await async_client.post("/login", data={
+        "username": doctor_user.email,
+        "password": "DoctorPass123!"
+    })
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def patient_user(db_session, seeded_roles):
+    return await _create_user_in_db(
+        db_session, "patient@test.com", "PatientPass123!", seeded_roles["Patient"]
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def patient_token(async_client, patient_user):
+    resp = await async_client.post("/login", data={
+        "username": patient_user.email,
+        "password": "PatientPass123!"
+    })
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def second_patient_user(db_session, seeded_roles):
+    return await _create_user_in_db(
+        db_session, "second_patient@test.com", "SecPatient123!", seeded_roles["Patient"]
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def second_patient_token(async_client, second_patient_user):
+    resp = await async_client.post("/login", data={
+        "username": second_patient_user.email,
+        "password": "SecPatient123!"
+    })
+    return resp.json()["access_token"]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def auditor_user(db_session, seeded_roles):
+    return await _create_user_in_db(
+        db_session, "auditor@test.com", "AuditorPass123!", seeded_roles["Auditor"]
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def auditor_token(async_client, auditor_user):
+    resp = await async_client.post("/login", data={
+        "username": auditor_user.email,
+        "password": "AuditorPass123!"
+    })
+    assert resp.status_code == 200
+    return resp.json()["access_token"]

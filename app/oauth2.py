@@ -4,12 +4,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import User   # return type is ORM model
+from app.models import User
+import redis.exceptions as redis_exc
 
-from app.cache import redis_client
+import app.cache                      # <-- changed from direct import
 from app.config import settings
 from app.database import get_db_session
-from app import crud, schemas
+from app import crud
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
@@ -37,13 +38,12 @@ async def get_current_user(
         if user_id is None or jti is None:
             raise credentials_exception
 
-        # Check blacklist – fail securely if Redis is down
         try:
-            is_blacklisted = await redis_client.get(f"blacklist:{jti}")
+            # Use the module‑level reference – our test fixture replaces it
+            is_blacklisted = await app.cache.redis_client.get(f"blacklist:{jti}")
             if is_blacklisted:
                 raise HTTPException(status_code=401, detail="Token has been revoked.")
-        except Exception:
-            # Redis is unreachable – fail closed
+        except (redis_exc.ConnectionError, redis_exc.TimeoutError):
             raise HTTPException(status_code=503, detail="Authentication service temporarily unavailable.")
 
     except jwt.ExpiredSignatureError:
