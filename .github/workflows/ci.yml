@@ -53,8 +53,8 @@ jobs:
       run: bandit -r app/
 
     - name: Run Async Pytest Engine
-      # DEVSECOPS PRINCIPLE: Strictly dummy values for isolated testing.
       env:
+        # Strict isolation: No production secrets exposed here.
         POSTGRES_USER: admin
         POSTGRES_PASSWORD: local_dev_password_change_me
         POSTGRES_DB: medcore_test_db 
@@ -94,19 +94,18 @@ jobs:
 
     - name: Execute Zero-Downtime Database Migration
       env:
-        # THE REAL KEY: Alembic uses this to physically connect to Switzerland
+        # Core DB connection variables to allow Pydantic to compile and Alembic to connect
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        
-        # THE FAKE IDS:
-        POSTGRES_USER: dummy
-        POSTGRES_PASSWORD: dummy
-        POSTGRES_DB: dummy
-        POSTGRES_HOST: dummy
+        POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
         POSTGRES_PORT: 5432
+        
+        # Fake IDs to satisfy Pydantic strictness without leaking real non-DB secrets
         SECRET_KEY: dummy_key_for_alembic_bypass
         ALGORITHM: HS256
         ACCESS_TOKEN_EXPIRE_MINUTES: 30
-        # FIX: Use a mathematically valid, but fake, Fernet key so the cryptography module doesn't crash
         ENCRYPTION_KEY: "cw_0x689RpI-jtRR7oE8h_eQsKImvJapLeSbXpwF4e4="
         ENCRYPTION_KEYS: '{"1": "cw_0x689RpI-jtRR7oE8h_eQsKImvJapLeSbXpwF4e4="}'
         ENCRYPTION_KEY_CURRENT_VERSION: 1
@@ -144,12 +143,17 @@ jobs:
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_NAME=ghcr.io/$REPO_LOWER/medcore-api:latest
         
-        # Injecting 100% of state dynamically from GitHub Secrets
+        # Azure CLI injection of the complete matrix state from GitHub Secrets
         az containerapp update \
           --name medcore-api \
           --resource-group medcore-prod-swiss-rg \
           --image $IMAGE_NAME \
           --set-env-vars DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                         POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+                         POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+                         POSTGRES_DB="${{ secrets.POSTGRES_DB }}" \
+                         POSTGRES_HOST="${{ secrets.POSTGRES_HOST }}" \
+                         POSTGRES_PORT="5432" \
                          SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}" \
                          REDIS_URL="${{ secrets.REDIS_URL }}" \
                          ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
