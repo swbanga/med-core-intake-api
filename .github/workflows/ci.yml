@@ -16,7 +16,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:15
         env:
           POSTGRES_USER: admin
           POSTGRES_PASSWORD: local_dev_password_change_me
@@ -29,7 +29,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:7
         ports:
           - 6379:6379
 
@@ -54,14 +54,13 @@ jobs:
 
     - name: Run Async Pytest Engine
       # DEVSECOPS PRINCIPLE: Strictly dummy values for isolated testing.
-      # Never expose ${{ secrets }} in the test runner.
       env:
         POSTGRES_USER: admin
         POSTGRES_PASSWORD: local_dev_password_change_me
-        POSTGRES_DB: medcore_db
+        POSTGRES_DB: medcore_test_db 
         POSTGRES_HOST: localhost  
         POSTGRES_PORT: 5432
-        SECRET_KEY: super_secret_github_actions_key
+        SECRET_KEY: super_secret_github_actions_key! 
         ALGORITHM: HS256
         ACCESS_TOKEN_EXPIRE_MINUTES: 30
         ENCRYPTION_KEY: "cw_0x689RpI-jtRR7oE8h_eQsKImvJapLeSbXpwF4e4="
