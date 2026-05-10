@@ -94,8 +94,21 @@ jobs:
 
     - name: Execute Zero-Downtime Database Migration
       env:
-        # Inject production DB secret so Alembic can align the schema before the code deploys
+        # THE REAL KEY: Alembic uses this to physically connect to Switzerland
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        
+        # THE FAKE IDS: Dummy variables purely to stop Pydantic from crashing on import
+        POSTGRES_USER: dummy
+        POSTGRES_PASSWORD: dummy
+        POSTGRES_DB: dummy
+        POSTGRES_HOST: dummy
+        POSTGRES_PORT: 5432
+        SECRET_KEY: dummy_key_for_alembic_bypass
+        ALGORITHM: HS256
+        ACCESS_TOKEN_EXPIRE_MINUTES: 30
+        ENCRYPTION_KEY: dummy_key
+        REDIS_URL: redis://localhost:6379/0
+        TEST_DATABASE_URL: postgresql+asyncpg://dummy:dummy@localhost:5432/dummy
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
